@@ -102,3 +102,18 @@ class FeatureEngineer:
         if transformation_type == "categorical":
             return self.encode_categorical(frame)
         raise ValueError(f"Unknown feature transformation: {transformation_type!r}")
+
+
+def engineer_features(frame: pd.DataFrame, group_column: Optional[str] = None) -> pd.DataFrame:
+    """Add aggregate features to a DataFrame.
+
+    Convenience function wrapping :class:`FeatureEngineer`.
+
+    Args:
+        frame: Input DataFrame.
+        group_column: Optional column to group by before aggregating.
+
+    Returns:
+        DataFrame including the new aggregate feature columns.
+    """
+    return FeatureEngineer().add_aggregate_features(frame, group_column=group_column)

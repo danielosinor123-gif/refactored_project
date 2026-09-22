@@ -130,5 +130,3 @@ class EmailSender:
             logger.error("Cannot send report email: %s", exc)
             return False
         return self.send(message)
-
-    send_report = send_email_report

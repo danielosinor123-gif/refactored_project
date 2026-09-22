@@ -113,19 +113,19 @@ class DataProcessor:
         frame = self.feature_engineer.encode_categorical(frame)
         return frame
 
-    def transform_data(self, frame: pd.DataFrame, transformation: str) -> pd.DataFrame:
+    def transform_data(self, frame: pd.DataFrame, transformation_type: str) -> pd.DataFrame:
         """Apply a numeric transformation to the processed data.
 
         Args:
             frame: Processed DataFrame.
-            transformation: ``"standard"``, ``"normalize"``, or ``"none"``.
+            transformation_type: ``"standard"``, ``"normalize"``, or ``"none"``.
 
         Returns:
             The transformed DataFrame.
         """
-        if transformation == "none":
+        if transformation_type == "none":
             return frame
-        return self.scaler.apply(frame, transformation)
+        return self.scaler.apply(frame, transformation_type)
 
     def export_processed_data(self, frame: pd.DataFrame, file_name: str = "processed_data.csv") -> Optional[Path]:
         """Export processed data to CSV and log it to the database.
@@ -172,18 +172,18 @@ class DataProcessor:
             statistics["mean_of_means"] = round(float(numeric.mean().mean()), 4)
         return statistics
 
-    def run(self, transformation: str = "standard") -> bool:
+    def run(self, transformation_type: str = "standard") -> bool:
         """Execute the complete data processing workflow.
 
         Args:
-            transformation: Numeric transformation to apply: ``"standard"``,
-                ``"normalize"``, or ``"none"``.
+            transformation_type: Numeric transformation to apply:
+                ``"standard"``, ``"normalize"``, or ``"none"``.
 
         Returns:
             ``True`` when the run completed successfully, ``False`` when it
             failed at any stage.
         """
-        logger.info("Starting data processing run (transformation=%s)", transformation)
+        logger.info("Starting data processing run (transformation=%s)", transformation_type)
         self.db.initialize()
 
         input_files = self.validator.find_files(self.config.input_directory)
@@ -207,7 +207,7 @@ class DataProcessor:
             return False
 
         combined = pd.concat(processed_frames, ignore_index=True)
-        combined = self.transform_data(combined, transformation)
+        combined = self.transform_data(combined, transformation_type)
 
         if self.export_processed_data(combined) is None:
             print("Data processing failed: could not export processed data.")
@@ -215,7 +215,7 @@ class DataProcessor:
 
         statistics = self.calculate_statistics(combined, len(processed_frames))
 
-        charts = self.chart_generator.generate_all(combined)
+        charts = self.chart_generator.generate_visualizations(combined)
         logger.info("Generated %d chart(s)", len(charts))
 
         summary_path = self.report_generator.generate_summary_report(

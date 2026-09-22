@@ -139,7 +139,7 @@ class ChartGenerator:
         axis.set_xticklabels(axis.get_xticklabels(), rotation=45, ha="right", fontsize=8)
         return self._save(figure, file_name)
 
-    def generate_all(self, frame: pd.DataFrame) -> list:
+    def generate_visualizations(self, frame: pd.DataFrame) -> list:
         """Generate every supported chart for a DataFrame.
 
         Args:
@@ -155,7 +155,7 @@ class ChartGenerator:
                 saved.append(path)
         return saved
 
-    generate_visualizations = generate_all
+    generate_all = generate_visualizations
 
 
 def generate_visualizations(
@@ -177,4 +177,4 @@ def generate_visualizations(
     Returns:
         List of saved image paths (skipping chart types with no data).
     """
-    return ChartGenerator(output_directory, dpi=dpi).generate_all(frame)
+    return ChartGenerator(output_directory, dpi=dpi).generate_visualizations(frame)

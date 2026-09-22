@@ -25,7 +25,7 @@ def detect_encoding(file_path: str | Path, sample_bytes: int = 65536) -> str:
 
     Returns:
         The first encoding that decodes the sample cleanly, defaulting to
-        ``utf-8`` when every candidate works or none can be probed.
+        ``latin-1`` when no candidate can be probed.
     """
     path = Path(file_path)
     for encoding in _CANDIDATE_ENCODINGS:
@@ -39,44 +39,6 @@ def detect_encoding(file_path: str | Path, sample_bytes: int = 65536) -> str:
             logger.error("Failed to read %s while detecting encoding: %s", path, exc)
             return "utf-8"
     return "latin-1"
-
-
-def load_csv_file(
-    file_path: str | Path,
-    db: Optional[DatabaseConnection] = None,
-    chunk_size: int = 1000,
-) -> Optional[pd.DataFrame]:
-    """Validate and load a CSV file into a DataFrame.
-
-    Convenience wrapper around :class:`CSVProcessor`.
-
-    Args:
-        file_path: Path to the CSV file.
-        db: Optional database connection used for raw-data load logging.
-            When ``None``, the load is not logged to the database.
-        chunk_size: Number of rows per chunk when loading large files.
-
-    Returns:
-        The combined :class:`pandas.DataFrame`, or ``None`` when the file
-        fails validation or cannot be read.
-    """
-    validator = FileValidator(supported_extensions=(".csv",))
-    if db is None:
-        processor = CSVProcessor.__new__(CSVProcessor)
-        processor.validator = validator
-        processor.db = _NullDatabase()
-        processor.chunk_size = int(chunk_size)
-        return processor.load(file_path)
-    processor = CSVProcessor(validator, db, chunk_size)
-    return processor.load(file_path)
-
-
-class _NullDatabase:
-    """No-op stand-in for the database when load logging is disabled."""
-
-    def insert_raw_data(self, source_file: str, file_hash: str, record_count: int) -> int:
-        """Do nothing; return a dummy row id."""
-        return 0
 
 
 class CSVProcessor:
@@ -182,3 +144,37 @@ class CSVProcessor:
         self.db.insert_raw_data("api:" + base_url, "", len(frame))
         logger.info("Loaded %d rows from API %s", len(frame), base_url)
         return frame
+
+
+def load_csv_file(
+    file_path: str | Path,
+    db: Optional[DatabaseConnection] = None,
+    chunk_size: int = 1000,
+) -> Optional[pd.DataFrame]:
+    """Validate and load a CSV file into a DataFrame.
+
+    Convenience wrapper around :class:`CSVProcessor`.
+
+    Args:
+        file_path: Path to the CSV file.
+        db: Optional database connection used for raw-data load logging.
+            When ``None``, the load is not logged to the database.
+        chunk_size: Number of rows per chunk when loading large files.
+
+    Returns:
+        The combined :class:`pandas.DataFrame`, or ``None`` when the file
+        fails validation or cannot be read.
+    """
+    validator = FileValidator(supported_extensions=(".csv",))
+    if db is None:
+        db = _NullDatabase()
+    processor = CSVProcessor(validator, db, chunk_size)
+    return processor.load(file_path)
+
+
+class _NullDatabase:
+    """No-op stand-in for the database when load logging is disabled."""
+
+    def insert_raw_data(self, source_file: str, file_hash: str, record_count: int) -> int:
+        """Do nothing; return a dummy row id."""
+        return 0

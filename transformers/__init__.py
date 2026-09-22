@@ -2,6 +2,13 @@
 
 from transformers.data_cleaner import DataCleaner, clean_data
 from transformers.data_scaler import DataScaler, transform_data
-from transformers.feature_engineer import FeatureEngineer
+from transformers.feature_engineer import FeatureEngineer, engineer_features
 
-__all__ = ["DataCleaner", "DataScaler", "FeatureEngineer", "clean_data", "transform_data"]
+__all__ = [
+    "DataCleaner",
+    "DataScaler",
+    "FeatureEngineer",
+    "clean_data",
+    "transform_data",
+    "engineer_features",
+]

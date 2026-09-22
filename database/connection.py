@@ -95,7 +95,10 @@ class DatabaseConnection:
         """
         conn = self.connect()
         with conn:
-            return conn.executemany(sql, [tuple(p) for p in seq_of_parameters])
+            cursor = conn.cursor()
+            cursor.executemany(sql, [tuple(p) for p in seq_of_parameters])
+            conn.commit()
+            return cursor
 
     def query_all(self, sql: str, parameters: Iterable[Any] = ()) -> List[sqlite3.Row]:
         """Fetch all rows matching a query.

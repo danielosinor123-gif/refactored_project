@@ -14,33 +14,6 @@ logger = get_logger(__name__)
 _WHITESPACE_RE = re.compile(r"\s+")
 
 
-def clean_data(
-    frame: pd.DataFrame,
-    missing_strategy: str = "drop",
-    fill_value: float = 0.0,
-    handle_outliers: Optional[bool] = None,
-) -> pd.DataFrame:
-    """Run the full cleaning pipeline over a DataFrame.
-
-    Convenience function wrapping :class:`DataCleaner`.
-
-    Args:
-        frame: Input DataFrame.
-        missing_strategy: How to handle missing values: ``"drop"``,
-            ``"fill"`` (numeric with ``fill_value``), or ``"none"``.
-        fill_value: Value used when ``missing_strategy`` is ``"fill"``.
-        handle_outliers: Optional override; defaults to enabled.
-
-    Returns:
-        The cleaned DataFrame with a ``processed_at`` column.
-    """
-    cleaner = DataCleaner(
-        missing_strategy=missing_strategy,
-        fill_value=fill_value,
-    )
-    return cleaner.clean(frame, handle_outliers=handle_outliers)
-
-
 class DataCleaner:
     """Applies cleaning steps to loaded DataFrames and scores quality."""
 
@@ -196,3 +169,27 @@ class DataCleaner:
         result = self.normalize_text(result)
         result = self.add_processing_timestamp(result)
         return result
+
+
+def clean_data(
+    frame: pd.DataFrame,
+    missing_strategy: str = "drop",
+    fill_value: float = 0.0,
+    handle_outliers: Optional[bool] = None,
+) -> pd.DataFrame:
+    """Run the full cleaning pipeline over a DataFrame.
+
+    Convenience function wrapping :class:`DataCleaner`.
+
+    Args:
+        frame: Input DataFrame.
+        missing_strategy: How to handle missing values: ``"drop"``,
+            ``"fill"`` (numeric with ``fill_value``), or ``"none"``.
+        fill_value: Value used when ``missing_strategy`` is ``"fill"``.
+        handle_outliers: Optional override; defaults to enabled.
+
+    Returns:
+        The cleaned DataFrame with a ``processed_at`` column.
+    """
+    cleaner = DataCleaner(missing_strategy=missing_strategy, fill_value=fill_value)
+    return cleaner.clean(frame, handle_outliers=handle_outliers)

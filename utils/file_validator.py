@@ -14,6 +14,8 @@ logger = get_logger(__name__)
 def calculate_file_hash(file_path: str | Path, algorithm: str = "sha256") -> str:
     """Compute the hash of a file's contents in a memory-efficient way.
 
+    This is the primary hashing entry point used across the project.
+
     Args:
         file_path: Path to the file to hash.
         algorithm: Hash algorithm name supported by :mod:`hashlib`.
@@ -121,7 +123,7 @@ class FileValidator:
         )
 
     def compute_hash(self, file_path: str | Path, algorithm: str = "sha256") -> str:
-        """Compute the hash of a file's contents in a memory-efficient way.
+        """Compute the hash of a file's contents.
 
         Args:
             file_path: Path to the file to hash.

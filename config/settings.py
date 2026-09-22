@@ -1,8 +1,9 @@
 """Application configuration management.
 
 Default values are defined here. Values may be overridden by an optional INI
-file and environment variables always take precedence for sensitive settings
-(passwords, API keys, encryption keys). No real secrets are hardcoded.
+file via ``load_config_from_file``, and environment variables always take
+precedence for sensitive settings (passwords, API keys, encryption keys).
+No real secrets are hardcoded.
 """
 
 from __future__ import annotations
@@ -11,7 +12,7 @@ import configparser
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 DEFAULT_CONFIG_FILENAME = "config.ini"
 
@@ -45,8 +46,8 @@ class AppConfig:
     smtp_use_tls: bool = True
     email_sender: str = "data-processor@example.com"
     email_recipients: list = field(default_factory=list)
-    smtp_password: str = field(default_factory=lambda: os.getenv("DATA_PROCESSOR_SMTP_PASSWORD", ""))
     smtp_username: str = field(default_factory=lambda: os.getenv("DATA_PROCESSOR_SMTP_USERNAME", ""))
+    smtp_password: str = field(default_factory=lambda: os.getenv("DATA_PROCESSOR_SMTP_PASSWORD", ""))
 
     # API settings (api key always via environment variable).
     api_enabled: bool = False
@@ -86,8 +87,10 @@ def _coerce_bool(value: str, default: bool) -> bool:
     return value.strip().lower() in ("1", "true", "yes", "on")
 
 
-def load_config(ini_path: Optional[str | Path] = None) -> AppConfig:
+def load_config_from_file(ini_path: Optional[str | Path] = None) -> AppConfig:
     """Load configuration from defaults, an optional INI file, and env vars.
+
+    This is the primary configuration entry point.
 
     Args:
         ini_path: Optional path to an INI configuration file. When not given,
@@ -161,22 +164,16 @@ def load_config(ini_path: Optional[str | Path] = None) -> AppConfig:
     return _finalize(config)
 
 
-def load_config_from_file(ini_path: str | Path) -> AppConfig:
-    """Load configuration explicitly from an INI file.
+def load_config(ini_path: Optional[str | Path] = None) -> AppConfig:
+    """Load application configuration; alias of :func:`load_config_from_file`.
 
     Args:
-        ini_path: Path to the INI configuration file.
+        ini_path: Optional path to an INI configuration file.
 
     Returns:
         A fully populated :class:`AppConfig` with paths resolved.
     """
-    return load_config(ini_path)
-
-
-def _finalize(config: AppConfig) -> AppConfig:
-    """Resolve paths and return the finalized configuration."""
-    config.resolve_paths()
-    return config
+    return load_config_from_file(ini_path)
 
 
 def get_default_ini_template() -> str:
@@ -221,3 +218,9 @@ file_retention_days = 90
 ;   DATA_PROCESSOR_API_KEY
 ;   DATA_PROCESSOR_ENCRYPTION_KEY
 """
+
+
+def _finalize(config: AppConfig) -> AppConfig:
+    """Resolve paths and return the finalized configuration."""
+    config.resolve_paths()
+    return config
