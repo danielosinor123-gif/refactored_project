@@ -1,0 +1,14 @@
+.git/
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+logs/
+backups/
+data/output/
+reports/generated/
+.env
+*.db
+*.sqlite
+*.sqlite3
