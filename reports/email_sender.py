@@ -105,7 +105,7 @@ class EmailSender:
         logger.info("Email sent to %s", message["To"])
         return True
 
-    def send_report(
+    def send_email_report(
         self,
         subject: str,
         body: str,
@@ -130,3 +130,5 @@ class EmailSender:
             logger.error("Cannot send report email: %s", exc)
             return False
         return self.send(message)
+
+    send_report = send_email_report

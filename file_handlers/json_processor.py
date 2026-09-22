@@ -14,6 +14,41 @@ from utils.logging_setup import get_logger
 logger = get_logger(__name__)
 
 
+def load_json_file(
+    file_path: str | Path,
+    db: Optional[DatabaseConnection] = None,
+) -> Optional[pd.DataFrame]:
+    """Validate and load a JSON file into a DataFrame.
+
+    Convenience wrapper around :class:`JSONProcessor`.
+
+    Args:
+        file_path: Path to the JSON file.
+        db: Optional database connection used for raw-data load logging.
+            When ``None``, the load is not logged to the database.
+
+    Returns:
+        The loaded :class:`pandas.DataFrame`, or ``None`` when the file
+        fails validation or cannot be read.
+    """
+    validator = FileValidator(supported_extensions=(".json",))
+    if db is None:
+        processor = JSONProcessor.__new__(JSONProcessor)
+        processor.validator = validator
+        processor.db = _NullDatabase()
+        return processor.load(file_path)
+    processor = JSONProcessor(validator, db)
+    return processor.load(file_path)
+
+
+class _NullDatabase:
+    """No-op stand-in for the database when load logging is disabled."""
+
+    def insert_raw_data(self, source_file: str, file_hash: str, record_count: int) -> int:
+        """Do nothing; return a dummy row id."""
+        return 0
+
+
 class JSONProcessor:
     """Loads and validates JSON files, logging each load to the database."""
 

@@ -11,6 +11,28 @@ from utils.logging_setup import get_logger
 logger = get_logger(__name__)
 
 
+def calculate_file_hash(file_path: str | Path, algorithm: str = "sha256") -> str:
+    """Compute the hash of a file's contents in a memory-efficient way.
+
+    Args:
+        file_path: Path to the file to hash.
+        algorithm: Hash algorithm name supported by :mod:`hashlib`.
+
+    Returns:
+        Hex digest string, or an empty string when hashing fails.
+    """
+    path = Path(file_path)
+    hasher = hashlib.new(algorithm)
+    try:
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(65536), b""):
+                hasher.update(chunk)
+    except OSError as exc:
+        logger.error("Failed to hash file %s: %s", path, exc)
+        return ""
+    return hasher.hexdigest()
+
+
 class FileValidator:
     """Validates files before processing and computes content hashes."""
 
@@ -109,15 +131,7 @@ class FileValidator:
             Hex digest string, or an empty string when hashing fails.
         """
         path = Path(file_path)
-        hasher = hashlib.new(algorithm)
-        try:
-            with path.open("rb") as handle:
-                for chunk in iter(lambda: handle.read(65536), b""):
-                    hasher.update(chunk)
-        except OSError as exc:
-            logger.error("Failed to hash file %s: %s", path, exc)
-            return ""
-        return hasher.hexdigest()
+        return calculate_file_hash(path, algorithm)
 
     def find_files(self, directory: str | Path) -> list:
         """List supported, non-empty files inside a directory.

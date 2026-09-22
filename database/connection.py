@@ -78,7 +78,10 @@ class DatabaseConnection:
         """
         conn = self.connect()
         with conn:
-            return conn.execute(sql, tuple(parameters))
+            cursor = conn.cursor()
+            cursor.execute(sql, tuple(parameters))
+            conn.commit()
+            return cursor
 
     def executemany(self, sql: str, seq_of_parameters: Iterable[Iterable[Any]]) -> sqlite3.Cursor:
         """Execute a SQL statement once per parameter sequence.

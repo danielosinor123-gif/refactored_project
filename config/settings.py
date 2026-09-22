@@ -161,6 +161,18 @@ def load_config(ini_path: Optional[str | Path] = None) -> AppConfig:
     return _finalize(config)
 
 
+def load_config_from_file(ini_path: str | Path) -> AppConfig:
+    """Load configuration explicitly from an INI file.
+
+    Args:
+        ini_path: Path to the INI configuration file.
+
+    Returns:
+        A fully populated :class:`AppConfig` with paths resolved.
+    """
+    return load_config(ini_path)
+
+
 def _finalize(config: AppConfig) -> AppConfig:
     """Resolve paths and return the finalized configuration."""
     config.resolve_paths()

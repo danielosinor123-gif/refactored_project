@@ -129,8 +129,46 @@ class ReportGenerator:
         if self.email_sender is None:
             logger.info("Email sender not configured; skipping email for %s", path.name)
             return False
-        return self.email_sender.send_report(
+        return self.email_sender.send_email_report(
             subject=f"{title} - {Path(path).name}",
             body=f"The generated report is attached.\n\n{summary}",
             attachment_path=path,
         )
+
+
+def generate_report(
+    statistics: dict,
+    frame: Optional[pd.DataFrame] = None,
+    report_directory: Optional[str | Path] = None,
+    db: Optional[DatabaseConnection] = None,
+    send_email: bool = False,
+    email_sender: Optional[EmailSender] = None,
+) -> Optional[Path]:
+    """Generate summary and detailed reports in one step.
+
+    Convenience orchestration function wrapping :class:`ReportGenerator`.
+    A detailed report is only produced when ``frame`` is provided.
+
+    Args:
+        statistics: Mapping of statistic names to values.
+        frame: Optional processed DataFrame to preview in a detailed report.
+        report_directory: Directory where reports are written. When ``None``,
+            defaults to ``reports/generated`` under the current directory.
+        db: Optional database connection used for report tracking records.
+        send_email: Whether to email the generated reports.
+        email_sender: Optional pre-built email sender.
+
+    Returns:
+        Path of the summary report, or the detailed report when a frame is
+        given. ``None`` on failure.
+    """
+    directory = Path(report_directory) if report_directory else Path("reports") / "generated"
+    generator = ReportGenerator(
+        db=db,
+        report_directory=directory,
+        email_sender=email_sender if send_email else None,
+    )
+    summary_path = generator.generate_summary_report(statistics, send_email=send_email)
+    if frame is not None:
+        return generator.generate_detailed_report(frame, statistics, send_email=send_email)
+    return summary_path

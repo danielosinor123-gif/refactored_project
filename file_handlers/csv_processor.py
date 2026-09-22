@@ -41,6 +41,44 @@ def detect_encoding(file_path: str | Path, sample_bytes: int = 65536) -> str:
     return "latin-1"
 
 
+def load_csv_file(
+    file_path: str | Path,
+    db: Optional[DatabaseConnection] = None,
+    chunk_size: int = 1000,
+) -> Optional[pd.DataFrame]:
+    """Validate and load a CSV file into a DataFrame.
+
+    Convenience wrapper around :class:`CSVProcessor`.
+
+    Args:
+        file_path: Path to the CSV file.
+        db: Optional database connection used for raw-data load logging.
+            When ``None``, the load is not logged to the database.
+        chunk_size: Number of rows per chunk when loading large files.
+
+    Returns:
+        The combined :class:`pandas.DataFrame`, or ``None`` when the file
+        fails validation or cannot be read.
+    """
+    validator = FileValidator(supported_extensions=(".csv",))
+    if db is None:
+        processor = CSVProcessor.__new__(CSVProcessor)
+        processor.validator = validator
+        processor.db = _NullDatabase()
+        processor.chunk_size = int(chunk_size)
+        return processor.load(file_path)
+    processor = CSVProcessor(validator, db, chunk_size)
+    return processor.load(file_path)
+
+
+class _NullDatabase:
+    """No-op stand-in for the database when load logging is disabled."""
+
+    def insert_raw_data(self, source_file: str, file_hash: str, record_count: int) -> int:
+        """Do nothing; return a dummy row id."""
+        return 0
+
+
 class CSVProcessor:
     """Loads and validates CSV files, logging each load to the database."""
 

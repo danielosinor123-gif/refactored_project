@@ -150,3 +150,28 @@ class HTMLReportWriter:
         path.write_text(document, encoding="utf-8")
         logger.info("HTML report written to %s", path)
         return path
+
+
+def generate_html_report(
+    path: str | Path,
+    title: str,
+    summary: str,
+    statistics: Optional[dict] = None,
+    table_html: str = "",
+) -> Path:
+    """Generate an HTML report file.
+
+    Convenience function wrapping :class:`HTMLReportWriter`.
+
+    Args:
+        path: Destination file path.
+        title: Report title.
+        summary: Plain-text summary paragraph.
+        statistics: Optional statistics mapping to render in the report.
+        table_html: Optional pre-rendered table HTML (e.g. from
+            :meth:`HTMLFormatter.format_table`).
+
+    Returns:
+        The path of the written report file.
+    """
+    return HTMLReportWriter().write(path, title, summary, statistics, table_html)

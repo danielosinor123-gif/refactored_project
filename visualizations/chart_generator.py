@@ -154,3 +154,27 @@ class ChartGenerator:
             if path is not None:
                 saved.append(path)
         return saved
+
+    generate_visualizations = generate_all
+
+
+def generate_visualizations(
+    frame: pd.DataFrame,
+    output_directory: str | Path,
+    dpi: int = 150,
+) -> list:
+    """Generate all supported charts for a DataFrame.
+
+    Convenience function wrapping :class:`ChartGenerator`. Creates the
+    output directory, saves every chart image, and closes figures after
+    saving to avoid memory leaks.
+
+    Args:
+        frame: Input DataFrame.
+        output_directory: Directory where chart images are saved.
+        dpi: Resolution of the saved images.
+
+    Returns:
+        List of saved image paths (skipping chart types with no data).
+    """
+    return ChartGenerator(output_directory, dpi=dpi).generate_all(frame)

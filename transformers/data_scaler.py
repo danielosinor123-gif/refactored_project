@@ -12,13 +12,13 @@ logger = get_logger(__name__)
 class DataScaler:
     """Applies standard scaling or min-max normalization to numeric columns."""
 
-    def apply(self, frame: pd.DataFrame, transformation: str) -> pd.DataFrame:
+    def apply(self, frame: pd.DataFrame, transformation_type: str) -> pd.DataFrame:
         """Apply a named transformation to the numeric columns of a DataFrame.
 
         Args:
             frame: Input DataFrame.
-            transformation: One of ``"standard"`` (zero mean, unit variance)
-                or ``"normalize"`` (min-max scaled to [0, 1]).
+            transformation_type: One of ``"standard"`` (zero mean, unit
+                variance) or ``"normalize"`` (min-max scaled to [0, 1]).
 
         Returns:
             DataFrame with transformed numeric columns.
@@ -26,12 +26,24 @@ class DataScaler:
         Raises:
             ValueError: When the transformation name is unknown.
         """
-        transformation = transformation.lower()
-        if transformation == "standard":
+        transformation_type = transformation_type.lower()
+        if transformation_type == "standard":
             return self.standard_scale(frame)
-        if transformation == "normalize":
+        if transformation_type == "normalize":
             return self.minmax_normalize(frame)
-        raise ValueError(f"Unknown transformation: {transformation!r}")
+        raise ValueError(f"Unknown transformation: {transformation_type!r}")
+
+    def transform(self, frame: pd.DataFrame, transformation_type: str) -> pd.DataFrame:
+        """Apply a named transformation; alias of :meth:`apply`.
+
+        Args:
+            frame: Input DataFrame.
+            transformation_type: ``"standard"`` or ``"normalize"``.
+
+        Returns:
+            DataFrame with transformed numeric columns.
+        """
+        return self.apply(frame, transformation_type)
 
     def standard_scale(self, frame: pd.DataFrame) -> pd.DataFrame:
         """Standard-scale numeric columns to zero mean and unit variance.
@@ -78,3 +90,22 @@ class DataScaler:
                 result[column] = (result[column] - minimum) / span
         logger.info("Min-max normalized %d numeric column(s)", len(numeric_columns))
         return result
+
+
+def transform_data(frame: pd.DataFrame, transformation_type: str) -> pd.DataFrame:
+    """Apply a numeric transformation to a DataFrame.
+
+    Convenience function wrapping :class:`DataScaler`.
+
+    Args:
+        frame: Input DataFrame.
+        transformation_type: ``"standard"`` (zero mean, unit variance) or
+            ``"normalize"`` (min-max scaled to [0, 1]).
+
+    Returns:
+        DataFrame with transformed numeric columns.
+
+    Raises:
+        ValueError: When the transformation name is unknown.
+    """
+    return DataScaler().apply(frame, transformation_type)

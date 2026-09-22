@@ -84,12 +84,12 @@ class FeatureEngineer:
             logger.info("Added 4 row aggregate feature(s)")
         return result
 
-    def transform(self, frame: pd.DataFrame, transformation: str) -> pd.DataFrame:
+    def transform(self, frame: pd.DataFrame, transformation_type: str) -> pd.DataFrame:
         """Apply a categorical feature transformation.
 
         Args:
             frame: Input DataFrame.
-            transformation: ``"categorical"`` enables one-hot encoding of
+            transformation_type: ``"categorical"`` enables one-hot encoding of
                 categorical columns.
 
         Returns:
@@ -98,7 +98,7 @@ class FeatureEngineer:
         Raises:
             ValueError: When the transformation name is unknown.
         """
-        transformation = transformation.lower()
-        if transformation == "categorical":
+        transformation_type = transformation_type.lower()
+        if transformation_type == "categorical":
             return self.encode_categorical(frame)
-        raise ValueError(f"Unknown feature transformation: {transformation!r}")
+        raise ValueError(f"Unknown feature transformation: {transformation_type!r}")
