@@ -1,4 +1,8 @@
-"""SQL schema definitions and table-creation statements."""
+"""SQL schema definitions and table-creation statements.
+
+Preserves the original table names and required database fields from the
+monolithic application: raw_data, processed_data, reports, and audit_log.
+"""
 
 from __future__ import annotations
 
@@ -9,20 +13,24 @@ RAW_DATA_SCHEMA = """
 CREATE TABLE IF NOT EXISTS raw_data (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     source_file TEXT NOT NULL,
-    file_hash TEXT,
-    loaded_at TEXT NOT NULL,
-    record_count INTEGER NOT NULL DEFAULT 0
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+    data_hash TEXT NOT NULL,
+    row_count INTEGER,
+    file_size INTEGER,
+    processing_status TEXT DEFAULT 'pending'
 )
 """
 
 PROCESSED_DATA_SCHEMA = """
 CREATE TABLE IF NOT EXISTS processed_data (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    source_file TEXT NOT NULL,
-    processed_at TEXT NOT NULL,
-    record_count INTEGER NOT NULL DEFAULT 0,
+    raw_data_id INTEGER,
+    processed_timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+    transformation_type TEXT,
+    output_file TEXT,
     quality_score REAL,
-    payload_json TEXT
+    error_count INTEGER DEFAULT 0,
+    FOREIGN KEY (raw_data_id) REFERENCES raw_data (id)
 )
 """
 
@@ -30,18 +38,21 @@ REPORTS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS reports (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     report_type TEXT NOT NULL,
-    report_path TEXT,
-    generated_at TEXT NOT NULL,
-    summary TEXT
+    generated_timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+    file_path TEXT,
+    recipient_email TEXT,
+    status TEXT DEFAULT 'generated'
 )
 """
 
 AUDIT_LOG_SCHEMA = """
 CREATE TABLE IF NOT EXISTS audit_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    event_type TEXT NOT NULL,
-    event_detail TEXT,
-    created_at TEXT NOT NULL
+    action TEXT NOT NULL,
+    user_id TEXT,
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+    details TEXT,
+    ip_address TEXT
 )
 """
 
@@ -61,9 +72,10 @@ def create_tables(conn: sqlite3.Connection) -> None:
     Args:
         conn: An open SQLite connection used to execute the schema.
     """
-    with conn:
-        for schema in ALL_SCHEMAS:
-            conn.execute(schema)
+    cursor = conn.cursor()
+    for schema in ALL_SCHEMAS:
+        cursor.execute(schema)
+    conn.commit()
 
 
 def table_exists(conn: sqlite3.Connection, table_name: str) -> bool:

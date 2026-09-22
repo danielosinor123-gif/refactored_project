@@ -1,4 +1,4 @@
-"""File validation utilities: existence, size, extension, and hashing."""
+"""File validation and hashing utilities."""
 
 from __future__ import annotations
 
@@ -11,10 +11,11 @@ from utils.logging_setup import get_logger
 logger = get_logger(__name__)
 
 
-def calculate_file_hash(file_path: str | Path, algorithm: str = "sha256") -> str:
-    """Compute the hash of a file's contents in a memory-efficient way.
+def calculate_file_hash(file_path: str | Path, algorithm: str = "md5") -> str:
+    """Calculate the hash of a file's contents in chunks.
 
-    This is the primary hashing entry point used across the project.
+    Preserves the original behavior: MD5 by default, read in 4096-byte
+    chunks, returning ``None``-like empty string on failure.
 
     Args:
         file_path: Path to the file to hash.
@@ -27,26 +28,27 @@ def calculate_file_hash(file_path: str | Path, algorithm: str = "sha256") -> str
     hasher = hashlib.new(algorithm)
     try:
         with path.open("rb") as handle:
-            for chunk in iter(lambda: handle.read(65536), b""):
+            for chunk in iter(lambda: handle.read(4096), b""):
                 hasher.update(chunk)
-    except OSError as exc:
-        logger.error("Failed to hash file %s: %s", path, exc)
+        return hasher.hexdigest()
+    except Exception as exc:  # noqa: BLE001 - hash failures are logged
+        logger.error("Hash calculation failed: %s", exc)
         return ""
-    return hasher.hexdigest()
 
 
 class FileValidator:
     """Validates files before processing and computes content hashes."""
 
-    def __init__(self, max_file_size_mb: float = 100.0, supported_extensions: Tuple[str, ...] = (".csv", ".json")):
+    def __init__(self, max_file_size: int = 100 * 1024 * 1024,
+                 valid_extensions: Tuple[str, ...] = (".csv", ".json", ".xlsx", ".txt")):
         """Create a validator.
 
         Args:
-            max_file_size_mb: Maximum allowed file size in megabytes.
-            supported_extensions: Allowed file extensions (lowercase).
+            max_file_size: Maximum allowed file size in bytes.
+            valid_extensions: Allowed file extensions.
         """
-        self.max_file_size_mb = float(max_file_size_mb)
-        self.supported_extensions = tuple(ext.lower() for ext in supported_extensions)
+        self.max_file_size = int(max_file_size)
+        self.valid_extensions = tuple(ext.lower() for ext in valid_extensions)
 
     def validate_exists(self, file_path: str | Path) -> bool:
         """Check that a file exists and is a regular file.
@@ -64,7 +66,7 @@ class FileValidator:
         return True
 
     def validate_size(self, file_path: str | Path) -> bool:
-        """Check that a file is not empty and within the configured size limit.
+        """Check that a file is not empty and within the size limit.
 
         Args:
             file_path: Path to the file to check.
@@ -75,18 +77,12 @@ class FileValidator:
         path = Path(file_path)
         if not path.exists():
             return False
-        size_bytes = path.stat().st_size
-        if size_bytes == 0:
+        size = path.stat().st_size
+        if size == 0:
             logger.warning("File is empty: %s", path)
             return False
-        size_mb = size_bytes / (1024 * 1024)
-        if size_mb > self.max_file_size_mb:
-            logger.warning(
-                "File exceeds size limit (%.2f MB > %.2f MB): %s",
-                size_mb,
-                self.max_file_size_mb,
-                path,
-            )
+        if size > self.max_file_size:
+            logger.warning("File too large (%d bytes): %s", size, path)
             return False
         return True
 
@@ -100,9 +96,8 @@ class FileValidator:
             ``True`` when the extension is supported, otherwise ``False``.
         """
         path = Path(file_path)
-        extension = path.suffix.lower()
-        if extension not in self.supported_extensions:
-            logger.warning("Unsupported file extension '%s': %s", extension, path)
+        if not any(str(path).lower().endswith(ext) for ext in self.valid_extensions):
+            logger.warning("Unsupported file type: %s", path)
             return False
         return True
 
@@ -115,14 +110,13 @@ class FileValidator:
         Returns:
             ``True`` only when every check passes.
         """
-        path = Path(file_path)
         return (
-            self.validate_exists(path)
-            and self.validate_extension(path)
-            and self.validate_size(path)
+            self.validate_exists(file_path)
+            and self.validate_extension(file_path)
+            and self.validate_size(file_path)
         )
 
-    def compute_hash(self, file_path: str | Path, algorithm: str = "sha256") -> str:
+    def compute_hash(self, file_path: str | Path, algorithm: str = "md5") -> str:
         """Compute the hash of a file's contents.
 
         Args:
@@ -132,24 +126,4 @@ class FileValidator:
         Returns:
             Hex digest string, or an empty string when hashing fails.
         """
-        path = Path(file_path)
-        return calculate_file_hash(path, algorithm)
-
-    def find_files(self, directory: str | Path) -> list:
-        """List supported, non-empty files inside a directory.
-
-        Args:
-            directory: Directory to scan for files.
-
-        Returns:
-            Sorted list of :class:`~pathlib.Path` objects passing validation.
-        """
-        directory = Path(directory)
-        if not directory.is_dir():
-            logger.warning("Input directory does not exist or is not a directory: %s", directory)
-            return []
-        files = []
-        for item in sorted(directory.iterdir()):
-            if item.is_file() and self.validate(item):
-                files.append(item)
-        return files
+        return calculate_file_hash(file_path, algorithm)

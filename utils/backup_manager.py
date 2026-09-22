@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
+import os
 import shutil
-import time
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -15,109 +17,99 @@ logger = get_logger(__name__)
 class BackupManager:
     """Creates timestamped backups and removes files past the retention period."""
 
-    def __init__(self, backup_directory: str | Path, retention_days: int = 30):
+    def __init__(self, backup_root: str | Path = "backups", backup_enabled: bool = True):
         """Create a backup manager.
 
         Args:
-            backup_directory: Directory where backups are stored.
-            retention_days: Number of days to retain backup artifacts.
+            backup_root: Root directory for backups.
+            backup_enabled: Whether backups are enabled.
         """
-        self.backup_directory = Path(backup_directory)
-        self.retention_days = int(retention_days)
+        self.backup_root = Path(backup_root)
+        self.backup_enabled = bool(backup_enabled)
 
-    def _timestamped_target(self, category: str) -> Path:
-        """Create and return a timestamped backup subdirectory for a category."""
-        timestamp = time.strftime("%Y%m%d_%H%M%S")
-        target = self.backup_directory / category / timestamp
-        target.mkdir(parents=True, exist_ok=True)
-        return target
+    def create_backup(self, database_path: str | Path, output_directory: Optional[str | Path] = None,
+                      reports_directory: Optional[str | Path] = None) -> Optional[Path]:
+        """Create a timestamped backup of the database, output, and reports.
 
-    def backup_database(self, database_path: str | Path) -> Optional[Path]:
-        """Back up the SQLite database file.
+        Preserves the original behavior: copies the database as
+        ``database_backup.db``, copies the output and reports trees, and
+        writes a ``backup_info.json`` metadata file.
 
         Args:
-            database_path: Path to the database file.
+            database_path: Path to the SQLite database file.
+            output_directory: Optional directory of generated output files.
+            reports_directory: Optional directory of generated reports.
 
         Returns:
-            Path of the backup copy, or ``None`` when the source is missing.
+            Path of the created backup directory, or ``None`` on failure.
         """
-        source = Path(database_path)
-        if not source.is_file():
-            logger.warning("Cannot back up missing database: %s", source)
+        if not self.backup_enabled:
             return None
-        target = self._timestamped_target("database") / source.name
-        shutil.copy2(source, target)
-        logger.info("Database backed up to %s", target)
-        return target
+        try:
+            logger.info("Creating data backup")
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup_dir = self.backup_root / f"backup_{timestamp}"
+            backup_dir.mkdir(parents=True, exist_ok=True)
 
-    def backup_directory_tree(self, source_directory: str | Path, category: str) -> Optional[Path]:
-        """Back up an entire directory tree (e.g. output or reports).
+            shutil.copy2(database_path, backup_dir / "database_backup.db")
 
-        Args:
-            source_directory: Directory to copy.
-            category: Backup category subdirectory name.
+            if output_directory and os.path.exists(output_directory):
+                shutil.copytree(output_directory, backup_dir / "output", dirs_exist_ok=True)
+            if reports_directory and os.path.exists(reports_directory):
+                shutil.copytree(reports_directory, backup_dir / "reports", dirs_exist_ok=True)
 
-        Returns:
-            Path of the backup copy, or ``None`` when the source is missing.
-        """
-        source = Path(source_directory)
-        if not source.is_dir():
-            logger.warning("Cannot back up missing directory: %s", source)
+            files = os.listdir(backup_dir)
+            backup_info = {
+                "timestamp": timestamp,
+                "database_size": os.path.getsize(database_path),
+                "files_backed_up": len(files),
+                "backup_size": sum(
+                    os.path.getsize(os.path.join(backup_dir, f))
+                    for f in files
+                    if os.path.isfile(os.path.join(backup_dir, f))
+                ),
+            }
+            with open(backup_dir / "backup_info.json", "w", encoding="utf-8") as handle:
+                json.dump(backup_info, handle, indent=2)
+
+            logger.info("Backup created: %s", backup_dir)
+            return backup_dir
+        except Exception as exc:  # noqa: BLE001 - backup failures are logged
+            logger.error("Backup failed: %s", exc)
             return None
-        target = self._timestamped_target(category)
-        shutil.copytree(source, target, dirs_exist_ok=True)
-        logger.info("Directory backed up: %s -> %s", source, target)
-        return target
 
-    def backup_output(self, output_directory: str | Path) -> Optional[Path]:
-        """Back up the processed-output directory.
+    def cleanup_old_files(self, days_old: int = 30, directories: Optional[list] = None) -> int:
+        """Delete files older than the retention period.
 
-        Args:
-            output_directory: Directory containing generated output files.
-
-        Returns:
-            Path of the backup copy, or ``None`` when the source is missing.
-        """
-        return self.backup_directory_tree(output_directory, "output")
-
-    def backup_reports(self, report_directory: str | Path) -> Optional[Path]:
-        """Back up the generated-reports directory.
+        Preserves the original behavior: cleans the output and reports
+        directories (or the directories provided).
 
         Args:
-            report_directory: Directory containing generated report files.
-
-        Returns:
-            Path of the backup copy, or ``None`` when the source is missing.
-        """
-        return self.backup_directory_tree(report_directory, "reports")
-
-    def cleanup_old_files(self, directory: str | Path, retention_days: Optional[int] = None) -> int:
-        """Delete files in a directory older than the retention period.
-
-        Args:
-            directory: Directory to clean up.
-            retention_days: Optional override for the configured retention days.
+            days_old: Age threshold in days.
+            directories: Optional explicit list of directories to clean.
+                Defaults to the output and reports directories under the
+                current working directory.
 
         Returns:
             Number of files removed.
         """
-        days = self.retention_days if retention_days is None else int(retention_days)
-        directory = Path(directory)
-        if not directory.is_dir():
-            logger.warning("Cannot clean up missing directory: %s", directory)
+        try:
+            logger.info("Cleaning up files older than %d days", days_old)
+            if directories is None:
+                directories = ["data/output/", "reports/"]
+            cutoff_date = datetime.now() - timedelta(days=days_old)
+            removed = 0
+            for directory in directories:
+                if not os.path.exists(directory):
+                    continue
+                for file_path in Path(directory).rglob("*"):
+                    if file_path.is_file():
+                        file_mtime = datetime.fromtimestamp(file_path.stat().st_mtime)
+                        if file_mtime < cutoff_date:
+                            file_path.unlink()
+                            logger.info("Deleted old file: %s", file_path)
+                            removed += 1
+            return removed
+        except Exception as exc:  # noqa: BLE001 - cleanup failures are logged
+            logger.error("Cleanup failed: %s", exc)
             return 0
-        cutoff = time.time() - days * 86400
-        removed = 0
-        for item in sorted(directory.rglob("*")):
-            if item.is_file():
-                try:
-                    if item.stat().st_mtime < cutoff:
-                        item.unlink()
-                        removed += 1
-                except OSError as exc:
-                    logger.error("Failed to remove old file %s: %s", item, exc)
-        if removed:
-            logger.info("Removed %d file(s) older than %d day(s) from %s", removed, days, directory)
-        else:
-            logger.debug("No files older than %d day(s) in %s", days, directory)
-        return removed

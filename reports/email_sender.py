@@ -1,132 +1,134 @@
-"""Email composition, report attachment, and SMTP sending."""
+"""Email composition, report attachment, and SMTP sending.
+
+Preserves the original email behavior: MIME multipart message with the
+report attached, STARTTLS upgrade, login, and send. Errors are logged,
+never raised, to keep the pipeline running.
+"""
 
 from __future__ import annotations
 
 import smtplib
-from email.message import EmailMessage
+from email import encoders
+from email.mime.base import MIMEBase
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import Optional
 
 from utils.logging_setup import get_logger
 
 logger = get_logger(__name__)
 
+REPORT_BODY = """
+Dear User,
+
+Please find attached the latest data processing report.
+
+Best regards,
+Data Processing System
+"""
+
 
 class EmailSender:
     """Composes report emails and sends them over SMTP."""
 
-    def __init__(
-        self,
-        smtp_server: str,
-        smtp_port: int,
-        sender: str,
-        recipients: Sequence[str],
-        username: str = "",
-        password: str = "",
-        use_tls: bool = True,
-        timeout_seconds: int = 30,
-    ):
+    def __init__(self, email_server: str = "smtp.gmail.com", email_port: int = 587,
+                 email_user: str = "", email_password: str = ""):
         """Create an email sender.
 
         Args:
-            smtp_server: SMTP host name.
-            smtp_port: SMTP port (587 for STARTTLS typically).
-            sender: From address.
-            recipients: List of To addresses.
-            username: Optional SMTP username (from environment/config).
-            password: Optional SMTP password (from environment/config).
-            use_tls: Whether to upgrade the connection with STARTTLS.
-            timeout_seconds: SMTP connection timeout in seconds.
+            email_server: SMTP host name.
+            email_port: SMTP port (587 for STARTTLS).
+            email_user: SMTP username / from address.
+            email_password: SMTP password (from environment/config).
         """
-        self.smtp_server = smtp_server
-        self.smtp_port = int(smtp_port)
-        self.sender = sender
-        self.recipients = list(recipients)
-        self.username = username
-        self.password = password
-        self.use_tls = bool(use_tls)
-        self.timeout_seconds = int(timeout_seconds)
+        self.email_server = email_server
+        self.email_port = int(email_port)
+        self.email_user = email_user
+        self.email_password = email_password
 
-    def compose_email(self, subject: str, body: str, attachment_path: Optional[str | Path] = None) -> EmailMessage:
-        """Compose an email message with an optional report attachment.
+    def compose_email(self, report_path: str | Path, recipient_email: str,
+                      subject: Optional[str] = None) -> MIMEMultipart:
+        """Compose an email message with the report attached.
 
         Args:
-            subject: Email subject line.
-            body: Plain-text email body.
-            attachment_path: Optional path to a file to attach.
+            report_path: Path to the report file to attach.
+            recipient_email: To address.
+            subject: Optional subject line. Defaults to the original subject.
 
         Returns:
-            The composed :class:`~email.message.EmailMessage`.
+            The composed :class:`~email.mime.multipart.MIMEMultipart`.
 
         Raises:
-            FileNotFoundError: When ``attachment_path`` does not exist.
+            FileNotFoundError: When ``report_path`` does not exist.
         """
-        message = EmailMessage()
-        message["From"] = self.sender
-        message["To"] = ", ".join(self.recipients)
-        message["Subject"] = subject
-        message.set_content(body)
-        if attachment_path is not None:
-            path = Path(attachment_path)
-            if not path.is_file():
-                raise FileNotFoundError(f"Attachment not found: {path}")
-            data = path.read_bytes()
-            message.add_attachment(
-                data,
-                maintype="application",
-                subtype="octet-stream",
-                filename=path.name,
-            )
-        return message
+        if subject is None:
+            subject = f"Data Processing Report - {__import__('datetime').datetime.now().strftime('%Y-%m-%d')}"
+        msg = MIMEMultipart()
+        msg["From"] = self.email_user
+        msg["To"] = recipient_email
+        msg["Subject"] = subject
+        msg.attach(MIMEText(REPORT_BODY, "plain"))
 
-    def send(self, message: EmailMessage) -> bool:
-        """Send a composed message over SMTP.
+        path = Path(report_path)
+        if not path.is_file():
+            raise FileNotFoundError(f"Attachment not found: {path}")
+        with open(path, "rb") as attachment:
+            part = MIMEBase("application", "octet-stream")
+            part.set_payload(attachment.read())
+        encoders.encode_base64(part)
+        part.add_header("Content-Disposition", f"attachment; filename= {path.name}")
+        msg.attach(part)
+        return msg
 
-        Args:
-            message: The message to send.
-
-        Returns:
-            ``True`` when sending succeeded, ``False`` otherwise. Errors are
-            logged, never raised, to keep the pipeline running.
-        """
-        try:
-            with smtplib.SMTP(self.smtp_server, self.smtp_port, timeout=self.timeout_seconds) as server:
-                if self.use_tls:
-                    server.starttls()
-                if self.username and self.password:
-                    server.login(self.username, self.password)
-                server.send_message(message)
-        except smtplib.SMTPException as exc:
-            logger.error("SMTP error while sending email: %s", exc)
-            return False
-        except OSError as exc:
-            logger.error("Connection error while sending email: %s", exc)
-            return False
-        logger.info("Email sent to %s", message["To"])
-        return True
-
-    def send_email_report(
-        self,
-        subject: str,
-        body: str,
-        attachment_path: Optional[str | Path] = None,
-    ) -> bool:
+    def send_email_report(self, report_path: str | Path, recipient_email: str) -> bool:
         """Compose and send a report email in one step.
 
         Args:
-            subject: Email subject line.
-            body: Plain-text email body.
-            attachment_path: Optional path to a report file to attach.
+            report_path: Path to the report file to attach.
+            recipient_email: To address.
 
         Returns:
             ``True`` when sending succeeded, ``False`` otherwise.
         """
-        if not self.recipients:
-            logger.warning("No email recipients configured; skipping report email")
-            return False
         try:
-            message = self.compose_email(subject, body, attachment_path)
-        except FileNotFoundError as exc:
-            logger.error("Cannot send report email: %s", exc)
+            logger.info("Sending report to %s", recipient_email)
+            msg = self.compose_email(report_path, recipient_email)
+            server = smtplib.SMTP(self.email_server, self.email_port)
+            server.starttls()
+            server.login(self.email_user, self.email_password)
+            text = msg.as_string()
+            server.sendmail(self.email_user, recipient_email, text)
+            server.quit()
+            logger.info("Email sent successfully")
+            return True
+        except Exception as exc:  # noqa: BLE001 - email failures are logged
+            logger.error("Email sending failed: %s", exc)
             return False
-        return self.send(message)
+
+
+def send_email_report(
+    report_path: str | Path,
+    recipient_email: str,
+    email_server: str = "smtp.gmail.com",
+    email_port: int = 587,
+    email_user: str = "",
+    email_password: str = "",
+) -> bool:
+    """Compose and send a report email.
+
+    Convenience function wrapping :class:`EmailSender`.
+
+    Args:
+        report_path: Path to the report file to attach.
+        recipient_email: To address.
+        email_server: SMTP host name.
+        email_port: SMTP port.
+        email_user: SMTP username / from address.
+        email_password: SMTP password (from environment/config).
+
+    Returns:
+        ``True`` when sending succeeded, ``False`` otherwise.
+    """
+    sender = EmailSender(email_server, email_port, email_user, email_password)
+    return sender.send_email_report(report_path, recipient_email)

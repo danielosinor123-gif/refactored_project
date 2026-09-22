@@ -1,11 +1,15 @@
-"""Report orchestration, generation, tracking, and delivery."""
+"""Report orchestration, generation, tracking, and delivery.
+
+Preserves the original behavior: the summary report is a ``.txt`` file with
+processing statistics and recently processed files; the detailed report is
+an HTML file. Each generated report is logged to the reports table.
+"""
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
-from typing import Optional
-
-import pandas as pd
+from typing import List, Optional
 
 from database.connection import DatabaseConnection
 from reports.email_sender import EmailSender
@@ -18,157 +22,137 @@ logger = get_logger(__name__)
 class ReportGenerator:
     """Generates summary and detailed reports and logs them to the database."""
 
-    def __init__(
-        self,
-        db: DatabaseConnection,
-        report_directory: str | Path,
-        html_writer: Optional[HTMLReportWriter] = None,
-        email_sender: Optional[EmailSender] = None,
-    ):
+    def __init__(self, db: Optional[DatabaseConnection], report_directory: str | Path,
+                 html_writer: Optional[HTMLReportWriter] = None,
+                 email_sender: Optional[EmailSender] = None):
         """Create a report generator.
 
         Args:
-            db: Database connection used for report tracking records.
+            db: Database connection used for report tracking and to list
+                recently processed files.
             report_directory: Directory where generated reports are written.
             html_writer: Optional custom HTML writer.
-            email_sender: Optional email sender used when email is enabled.
+            email_sender: Optional email sender for report delivery.
         """
         self.db = db
         self.report_directory = Path(report_directory)
         self.html_writer = html_writer or HTMLReportWriter(HTMLFormatter())
         self.email_sender = email_sender
+        self.reports_generated: List[str] = []
 
-    def _report_path(self, name: str) -> Path:
-        """Build a report file path inside the report directory."""
-        return self.report_directory / name
+    def generate_summary_report(self, summary_stats: dict, file_name: Optional[str] = None) -> Optional[Path]:
+        """Generate a summary ``.txt`` report.
 
-    def _log_report(self, report_type: str, path: Path, summary: str) -> None:
+        Args:
+            summary_stats: Mapping of statistic names to values.
+            file_name: Optional file name. Defaults to
+                ``summary_report_{timestamp}.txt``.
+
+        Returns:
+            Path of the generated report, or ``None`` on failure.
+        """
+        try:
+            logger.info("Generating summary report")
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            self.report_directory.mkdir(parents=True, exist_ok=True)
+            report_path = self.report_directory / (
+                file_name or f"summary_report_{timestamp}.txt"
+            )
+            with open(report_path, "w", encoding="utf-8") as handle:
+                handle.write("DATA PROCESSING SUMMARY REPORT\n")
+                handle.write("=" * 50 + "\n\n")
+                handle.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+                handle.write("PROCESSING STATISTICS:\n")
+                handle.write("-" * 25 + "\n")
+                for key, value in summary_stats.items():
+                    handle.write(f"{key}: {value}\n")
+                handle.write("\n\nFILES PROCESSED:\n")
+                handle.write("-" * 20 + "\n")
+                if self.db is not None:
+                    for row in self.db.fetch_recent_raw_loads(10):
+                        handle.write(
+                            f"File: {row['source_file']}, Rows: {row['row_count']},"
+                            f" Time: {row['timestamp']}\n"
+                        )
+            self._log_report("summary", str(report_path))
+            self.reports_generated.append(str(report_path))
+            logger.info("Report generated: %s", report_path)
+            return report_path
+        except Exception as exc:  # noqa: BLE001 - report failures are logged
+            logger.error("Report generation failed: %s", exc)
+            return None
+
+    def generate_detailed_report(self, summary_stats: dict, file_name: Optional[str] = None) -> Optional[Path]:
+        """Generate a detailed HTML report.
+
+        Args:
+            summary_stats: Mapping of statistic names to values.
+            file_name: Optional file name. Defaults to
+                ``detailed_report_{timestamp}.html``.
+
+        Returns:
+            Path of the generated report, or ``None`` on failure.
+        """
+        try:
+            logger.info("Generating detailed report")
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            self.report_directory.mkdir(parents=True, exist_ok=True)
+            report_path = self.report_directory / (
+                file_name or f"detailed_report_{timestamp}.html"
+            )
+            html_content = self.html_writer.formatter.generate_html(summary_stats)
+            with open(report_path, "w", encoding="utf-8") as handle:
+                handle.write(html_content)
+            self._log_report("detailed", str(report_path))
+            self.reports_generated.append(str(report_path))
+            logger.info("Report generated: %s", report_path)
+            return report_path
+        except Exception as exc:  # noqa: BLE001 - report failures are logged
+            logger.error("Report generation failed: %s", exc)
+            return None
+
+    def _log_report(self, report_type: str, report_path: str) -> None:
         """Record a generated report in the database."""
-        self.db.insert_report(report_type, str(path), summary)
+        if self.db is not None:
+            self.db.log_report(report_type, report_path, status="completed")
 
-    def generate_summary_report(
-        self,
-        statistics: dict,
-        file_name: str = "summary_report.html",
-        send_email: bool = False,
-    ) -> Optional[Path]:
-        """Generate a summary report from pipeline statistics.
+    def generate_report(self, report_type: str = "summary", summary_stats: Optional[dict] = None) -> Optional[Path]:
+        """Generate a report of the given type.
 
         Args:
-            statistics: Mapping of statistic names to values.
-            file_name: Destination file name inside the report directory.
-            send_email: Whether to email the generated report.
+            report_type: ``"summary"`` or ``"detailed"``. Defaults to
+                ``"summary"``.
+            summary_stats: Mapping of statistic names to values.
 
         Returns:
             Path of the generated report, or ``None`` on failure.
         """
-        summary = self._build_summary_text(statistics)
-        try:
-            path = self.html_writer.write(
-                self._report_path(file_name),
-                title="Data Processing Summary Report",
-                summary=summary,
-                statistics=statistics,
-            )
-        except OSError as exc:
-            logger.error("Failed to write summary report: %s", exc)
-            return None
-        self._log_report("summary", path, summary)
-        if send_email:
-            self._email_report("Data Processing Summary Report", path, summary)
-        return path
-
-    def generate_detailed_report(
-        self,
-        frame: pd.DataFrame,
-        statistics: dict,
-        file_name: str = "detailed_report.html",
-        send_email: bool = False,
-        max_rows: int = 25,
-    ) -> Optional[Path]:
-        """Generate a detailed report including a data preview table.
-
-        Args:
-            frame: Processed DataFrame to preview in the report.
-            statistics: Mapping of statistic names to values.
-            file_name: Destination file name inside the report directory.
-            send_email: Whether to email the generated report.
-            max_rows: Maximum number of preview rows to include.
-
-        Returns:
-            Path of the generated report, or ``None`` on failure.
-        """
-        summary = self._build_summary_text(statistics)
-        formatter = self.html_writer.formatter
-        table_html = formatter.format_table(frame, max_rows=max_rows)
-        try:
-            path = self.html_writer.write(
-                self._report_path(file_name),
-                title="Data Processing Detailed Report",
-                summary=summary,
-                statistics=statistics,
-                table_html=table_html,
-            )
-        except OSError as exc:
-            logger.error("Failed to write detailed report: %s", exc)
-            return None
-        self._log_report("detailed", path, summary)
-        if send_email:
-            self._email_report("Data Processing Detailed Report", path, summary)
-        return path
-
-    def _build_summary_text(self, statistics: dict) -> str:
-        """Build a one-paragraph summary line from statistics."""
-        if not statistics:
-            return "No statistics were produced for this run."
-        parts = [f"{key}: {value}" for key, value in statistics.items()]
-        return " | ".join(parts)
-
-    def _email_report(self, title: str, path: Path, summary: str) -> bool:
-        """Email a generated report when an email sender is configured."""
-        if self.email_sender is None:
-            logger.info("Email sender not configured; skipping email for %s", path.name)
-            return False
-        return self.email_sender.send_email_report(
-            subject=f"{title} - {Path(path).name}",
-            body=f"The generated report is attached.\n\n{summary}",
-            attachment_path=path,
-        )
+        stats = summary_stats or {}
+        if report_type == "detailed":
+            return self.generate_detailed_report(stats)
+        return self.generate_summary_report(stats)
 
 
 def generate_report(
-    statistics: dict,
-    frame: Optional[pd.DataFrame] = None,
+    report_type: str = "summary",
+    summary_stats: Optional[dict] = None,
     report_directory: Optional[str | Path] = None,
     db: Optional[DatabaseConnection] = None,
-    send_email: bool = False,
-    email_sender: Optional[EmailSender] = None,
 ) -> Optional[Path]:
-    """Generate summary and detailed reports in one step.
+    """Generate a report of the given type.
 
-    Convenience orchestration function wrapping :class:`ReportGenerator`.
-    A detailed report is only produced when ``frame`` is provided.
+    Convenience function wrapping :class:`ReportGenerator`.
 
     Args:
-        statistics: Mapping of statistic names to values.
-        frame: Optional processed DataFrame to preview in a detailed report.
-        report_directory: Directory where reports are written. When ``None``,
-            defaults to ``reports/generated`` under the current directory.
-        db: Optional database connection used for report tracking records.
-        send_email: Whether to email the generated reports.
-        email_sender: Optional pre-built email sender.
+        report_type: ``"summary"`` or ``"detailed"``. Defaults to ``"summary"``.
+        summary_stats: Mapping of statistic names to values.
+        report_directory: Directory where reports are written. Defaults to
+            ``reports/`` under the current directory.
+        db: Optional database connection for report tracking.
 
     Returns:
-        Path of the summary report, or the detailed report when a frame is
-        given. ``None`` on failure.
+        Path of the generated report, or ``None`` on failure.
     """
-    directory = Path(report_directory) if report_directory else Path("reports") / "generated"
-    generator = ReportGenerator(
-        db=db,
-        report_directory=directory,
-        email_sender=email_sender if send_email else None,
-    )
-    summary_path = generator.generate_summary_report(statistics, send_email=send_email)
-    if frame is not None:
-        return generator.generate_detailed_report(frame, statistics, send_email=send_email)
-    return summary_path
+    directory = Path(report_directory) if report_directory else Path("reports")
+    generator = ReportGenerator(db=db, report_directory=directory)
+    return generator.generate_report(report_type, summary_stats)

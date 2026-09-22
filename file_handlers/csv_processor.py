@@ -2,59 +2,74 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
-from typing import Iterator, Optional
+from typing import Iterator, Optional, Tuple
 
 import pandas as pd
 
 from database.connection import DatabaseConnection
-from utils.file_validator import FileValidator
+from utils.file_validator import calculate_file_hash
 from utils.logging_setup import get_logger
 
 logger = get_logger(__name__)
 
-_CANDIDATE_ENCODINGS = ("utf-8", "utf-8-sig", "latin-1", "cp1252")
+_CANDIDATE_ENCODINGS = ("utf-8", "latin1", "cp1252")
+_DEFAULT_EXTENSIONS: Tuple[str, ...] = (".csv", ".json", ".xlsx", ".txt")
+DEFAULT_MAX_FILE_SIZE = 100 * 1024 * 1024
 
 
-def detect_encoding(file_path: str | Path, sample_bytes: int = 65536) -> str:
-    """Detect a readable text encoding for a CSV file.
+def validate_file(
+    file_path: str | Path,
+    max_file_size: int = DEFAULT_MAX_FILE_SIZE,
+    valid_extensions: Tuple[str, ...] = _DEFAULT_EXTENSIONS,
+) -> bool:
+    """Validate an input file: existence, size, and supported extension.
+
+    Logs a warning and returns ``False`` on any failure, matching the
+    original error-handling behavior.
 
     Args:
-        file_path: Path to the CSV file.
-        sample_bytes: Number of bytes to probe when testing encodings.
+        file_path: Path to the file to validate.
+        max_file_size: Maximum allowed file size in bytes.
+        valid_extensions: Allowed file extensions.
 
     Returns:
-        The first encoding that decodes the sample cleanly, defaulting to
-        ``latin-1`` when no candidate can be probed.
+        ``True`` when every check passes, otherwise ``False``.
     """
     path = Path(file_path)
-    for encoding in _CANDIDATE_ENCODINGS:
-        try:
-            with path.open("r", encoding=encoding) as handle:
-                handle.read(sample_bytes)
-            return encoding
-        except (UnicodeDecodeError, UnicodeError):
-            continue
-        except OSError as exc:
-            logger.error("Failed to read %s while detecting encoding: %s", path, exc)
-            return "utf-8"
-    return "latin-1"
+    try:
+        if not path.exists():
+            raise FileNotFoundError(f"File not found: {file_path}")
+        file_size = os.path.getsize(file_path)
+        if file_size > max_file_size:
+            raise ValueError(f"File too large: {file_size} bytes")
+        if file_size == 0:
+            raise ValueError("File is empty")
+        if not any(str(file_path).lower().endswith(ext) for ext in valid_extensions):
+            raise ValueError(f"Unsupported file type: {file_path}")
+        return True
+    except Exception as exc:  # noqa: BLE001 - validation failures are logged
+        logger.error("File validation failed: %s", exc)
+        return False
 
 
 class CSVProcessor:
     """Loads and validates CSV files, logging each load to the database."""
 
-    def __init__(self, validator: FileValidator, db: DatabaseConnection, chunk_size: int = 1000):
+    def __init__(self, db: Optional[DatabaseConnection] = None, chunk_size: int = 10000,
+                 max_file_size: int = DEFAULT_MAX_FILE_SIZE):
         """Create a CSV processor.
 
         Args:
-            validator: File validator used before loading.
-            db: Database connection used for raw-data load logging.
+            db: Database connection used for raw-data load logging. When
+                ``None``, loads are not logged.
             chunk_size: Number of rows per chunk when loading large files.
+            max_file_size: Maximum allowed file size in bytes.
         """
-        self.validator = validator
         self.db = db
         self.chunk_size = int(chunk_size)
+        self.max_file_size = int(max_file_size)
 
     def can_handle(self, file_path: str | Path) -> bool:
         """Check whether this processor handles the given file extension.
@@ -75,12 +90,11 @@ class CSVProcessor:
             encoding: Text encoding to use when reading.
 
         Yields:
-            Non-empty :class:`pandas.DataFrame` chunks.
+            :class:`pandas.DataFrame` chunks.
         """
         reader = pd.read_csv(file_path, encoding=encoding, chunksize=self.chunk_size)
         for chunk in reader:
-            if not chunk.empty:
-                yield chunk
+            yield chunk
 
     def load(self, file_path: str | Path) -> Optional[pd.DataFrame]:
         """Validate and load a CSV file into a DataFrame.
@@ -89,67 +103,44 @@ class CSVProcessor:
             file_path: Path to the CSV file.
 
         Returns:
-            The combined :class:`pandas.DataFrame`, or ``None`` when the file
-            fails validation or cannot be read.
-        """
-        path = Path(file_path)
-        if not self.validator.validate(path):
-            return None
-        encoding = detect_encoding(path)
-        file_hash = self.validator.compute_hash(path)
-        chunks = []
-        try:
-            for chunk in self._iter_chunks(path, encoding):
-                chunks.append(chunk)
-        except (pd.errors.ParserError, pd.errors.EmptyDataError, UnicodeDecodeError) as exc:
-            logger.error("Failed to parse CSV file %s: %s", path, exc)
-            return None
-
-        if not chunks:
-            logger.warning("No data rows found in CSV file: %s", path)
-            return None
-
-        frame = pd.concat(chunks, ignore_index=True)
-        self.db.insert_raw_data(path.name, file_hash, len(frame))
-        logger.info("Loaded %d rows from CSV %s (encoding=%s)", len(frame), path.name, encoding)
-        return frame
-
-    def load_api(self, base_url: str, api_key: str = "", timeout_seconds: int = 30) -> Optional[pd.DataFrame]:
-        """Load CSV data from a remote API endpoint.
-
-        Args:
-            base_url: URL of the endpoint returning CSV content.
-            api_key: Optional API key sent as a bearer token.
-            timeout_seconds: Request timeout in seconds.
-
-        Returns:
-            The loaded :class:`pandas.DataFrame`, or ``None`` on failure.
+            The combined :class:`pandas.DataFrame`, or ``None`` on failure.
         """
         try:
-            import requests
+            logger.info("Loading CSV file: %s", file_path)
+            if not validate_file(file_path, self.max_file_size):
+                return None
 
-            headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
-            response = requests.get(base_url, headers=headers, timeout=timeout_seconds)
-            response.raise_for_status()
-        except Exception as exc:  # noqa: BLE001 - network layer raises many types
-            logger.error("Failed to load CSV data from API %s: %s", base_url, exc)
+            df = None
+            for encoding in _CANDIDATE_ENCODINGS:
+                try:
+                    df = self._iter_chunks(Path(file_path), encoding)
+                    break
+                except UnicodeDecodeError:
+                    continue
+            if df is None:
+                raise ValueError("Could not decode file with any encoding")
+
+            all_data = list(df)
+            final_df = pd.concat(all_data, ignore_index=True)
+
+            if self.db is not None:
+                file_hash = calculate_file_hash(file_path)
+                self.db.log_raw_load(
+                    str(file_path), file_hash, len(final_df), os.path.getsize(file_path)
+                )
+
+            logger.info("Successfully loaded %d rows from %s", len(final_df), file_path)
+            return final_df
+        except Exception as exc:  # noqa: BLE001 - load failures are logged
+            logger.error("Failed to load CSV: %s", exc)
             return None
-
-        import io
-
-        frame = pd.read_csv(io.StringIO(response.text))
-        if frame.empty:
-            logger.warning("API returned no data rows: %s", base_url)
-            return None
-        self.db.insert_raw_data("api:" + base_url, "", len(frame))
-        logger.info("Loaded %d rows from API %s", len(frame), base_url)
-        return frame
 
 
 def load_csv_file(
     file_path: str | Path,
     db: Optional[DatabaseConnection] = None,
-    chunk_size: int = 1000,
+    chunk_size: int = 10000,
+    max_file_size: int = DEFAULT_MAX_FILE_SIZE,
 ) -> Optional[pd.DataFrame]:
     """Validate and load a CSV file into a DataFrame.
 
@@ -158,23 +149,10 @@ def load_csv_file(
     Args:
         file_path: Path to the CSV file.
         db: Optional database connection used for raw-data load logging.
-            When ``None``, the load is not logged to the database.
         chunk_size: Number of rows per chunk when loading large files.
+        max_file_size: Maximum allowed file size in bytes.
 
     Returns:
-        The combined :class:`pandas.DataFrame`, or ``None`` when the file
-        fails validation or cannot be read.
+        The combined :class:`pandas.DataFrame`, or ``None`` on failure.
     """
-    validator = FileValidator(supported_extensions=(".csv",))
-    if db is None:
-        db = _NullDatabase()
-    processor = CSVProcessor(validator, db, chunk_size)
-    return processor.load(file_path)
-
-
-class _NullDatabase:
-    """No-op stand-in for the database when load logging is disabled."""
-
-    def insert_raw_data(self, source_file: str, file_hash: str, record_count: int) -> int:
-        """Do nothing; return a dummy row id."""
-        return 0
+    return CSVProcessor(db=db, chunk_size=chunk_size, max_file_size=max_file_size).load(file_path)

@@ -40,11 +40,11 @@ class FeatureEngineer:
         """
         result = frame.copy()
         if columns is None:
-            object_columns = list(result.select_dtypes(include=["object", "string"]).columns)
+            object_columns = list(result.select_dtypes(include=["object"]).columns)
             columns = [
                 column
                 for column in object_columns
-                if column != "processed_at"
+                if column != "processed_timestamp"
                 and result[column].nunique() <= self.max_categories
             ][: self.max_categorical_columns]
         if not columns:
@@ -57,10 +57,6 @@ class FeatureEngineer:
 
     def add_aggregate_features(self, frame: pd.DataFrame, group_column: Optional[str] = None) -> pd.DataFrame:
         """Add aggregate features over numeric columns.
-
-        When a group column is provided, per-group sums and means are added
-        as new columns. Otherwise, per-row row_sum, row_mean, row_min, and
-        row_max features are added.
 
         Args:
             frame: Input DataFrame.
@@ -77,31 +73,11 @@ class FeatureEngineer:
             result = result.merge(grouped.reset_index(), on=group_column, how="left")
             logger.info("Added %d group aggregate feature(s)", grouped.shape[1])
         elif not numeric.empty:
-            result["row_sum"] = numeric.sum(axis=1)
-            result["row_mean"] = numeric.mean(axis=1)
-            result["row_min"] = numeric.min(axis=1)
-            result["row_max"] = numeric.max(axis=1)
-            logger.info("Added 4 row aggregate feature(s)")
+            result["feature_sum"] = numeric.sum(axis=1)
+            result["feature_mean"] = numeric.mean(axis=1)
+            result["feature_std"] = numeric.std(axis=1)
+            logger.info("Added 3 row aggregate feature(s)")
         return result
-
-    def transform(self, frame: pd.DataFrame, transformation_type: str) -> pd.DataFrame:
-        """Apply a categorical feature transformation.
-
-        Args:
-            frame: Input DataFrame.
-            transformation_type: ``"categorical"`` enables one-hot encoding of
-                categorical columns.
-
-        Returns:
-            Transformed DataFrame.
-
-        Raises:
-            ValueError: When the transformation name is unknown.
-        """
-        transformation_type = transformation_type.lower()
-        if transformation_type == "categorical":
-            return self.encode_categorical(frame)
-        raise ValueError(f"Unknown feature transformation: {transformation_type!r}")
 
 
 def engineer_features(frame: pd.DataFrame, group_column: Optional[str] = None) -> pd.DataFrame:

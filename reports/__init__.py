@@ -1,6 +1,6 @@
 """Reports package: generation, HTML formatting, and email delivery."""
 
-from reports.email_sender import EmailSender
+from reports.email_sender import EmailSender, send_email_report
 from reports.generator import ReportGenerator, generate_report
 from reports.html_formatter import HTMLFormatter, HTMLReportWriter, generate_html_report
 
@@ -11,4 +11,5 @@ __all__ = [
     "EmailSender",
     "generate_report",
     "generate_html_report",
+    "send_email_report",
 ]

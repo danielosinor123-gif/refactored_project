@@ -1,7 +1,8 @@
-"""Data scaling: standard scaling and min-max normalization."""
+"""Data scaling: standard scaling, min-max normalization, and encoding."""
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 
 from utils.logging_setup import get_logger
@@ -10,102 +11,77 @@ logger = get_logger(__name__)
 
 
 class DataScaler:
-    """Applies standard scaling or min-max normalization to numeric columns."""
+    """Applies the original transformation types to numeric columns."""
 
-    def apply(self, frame: pd.DataFrame, transformation_type: str) -> pd.DataFrame:
-        """Apply a named transformation to the numeric columns of a DataFrame.
+    def transform(self, df: pd.DataFrame, transformation_type: str = "standard") -> pd.DataFrame:
+        """Apply a data transformation to a DataFrame.
 
-        Args:
-            frame: Input DataFrame.
-            transformation_type: One of ``"standard"`` (zero mean, unit
-                variance) or ``"normalize"`` (min-max scaled to [0, 1]).
-
-        Returns:
-            DataFrame with transformed numeric columns.
-
-        Raises:
-            ValueError: When the transformation name is unknown.
-        """
-        transformation_type = transformation_type.lower()
-        if transformation_type == "standard":
-            return self.standard_scale(frame)
-        if transformation_type == "normalize":
-            return self.minmax_normalize(frame)
-        raise ValueError(f"Unknown transformation: {transformation_type!r}")
-
-    def transform(self, frame: pd.DataFrame, transformation_type: str) -> pd.DataFrame:
-        """Apply a named transformation; alias of :meth:`apply`.
+        Preserves the original behavior: ``standard`` adds
+        ``{col}_standardized`` columns (skipping ``quality_score``),
+        ``normalize`` adds ``{col}_normalized`` columns, ``categorical`` adds
+        ``{col}_encoded`` columns via category codes (skipping
+        ``processed_timestamp``). Afterwards adds ``feature_sum``,
+        ``feature_mean``, and ``feature_std`` aggregate columns.
 
         Args:
-            frame: Input DataFrame.
-            transformation_type: ``"standard"`` or ``"normalize"``.
+            df: Input DataFrame.
+            transformation_type: One of ``"standard"``, ``"normalize"``, or
+                ``"categorical"``. Defaults to ``"standard"``.
 
         Returns:
-            DataFrame with transformed numeric columns.
+            The transformed DataFrame (the input is returned on failure).
         """
-        return self.apply(frame, transformation_type)
+        try:
+            logger.info("Applying %s transformation", transformation_type)
 
-    def standard_scale(self, frame: pd.DataFrame) -> pd.DataFrame:
-        """Standard-scale numeric columns to zero mean and unit variance.
+            if transformation_type == "standard":
+                numeric_columns = df.select_dtypes(include=[np.number]).columns
+                for col in numeric_columns:
+                    if col not in ["quality_score"]:
+                        mean_val = df[col].mean()
+                        std_val = df[col].std()
+                        if std_val != 0:
+                            df[f"{col}_standardized"] = (df[col] - mean_val) / std_val
 
-        Args:
-            frame: Input DataFrame.
+            elif transformation_type == "normalize":
+                numeric_columns = df.select_dtypes(include=[np.number]).columns
+                for col in numeric_columns:
+                    if col not in ["quality_score"]:
+                        min_val = df[col].min()
+                        max_val = df[col].max()
+                        if max_val != min_val:
+                            df[f"{col}_normalized"] = (df[col] - min_val) / (max_val - min_val)
 
-        Returns:
-            DataFrame with standard-scaled numeric columns.
-        """
-        result = frame.copy()
-        numeric_columns = result.select_dtypes(include="number").columns
-        if numeric_columns.empty:
-            return result
-        for column in numeric_columns:
-            std = result[column].std()
-            if pd.isna(std) or std == 0:
-                result[column] = 0.0
-            else:
-                result[column] = (result[column] - result[column].mean()) / std
-        logger.info("Standard-scaled %d numeric column(s)", len(numeric_columns))
-        return result
+            elif transformation_type == "categorical":
+                text_columns = df.select_dtypes(include=["object"]).columns
+                for col in text_columns:
+                    if col not in ["processed_timestamp"]:
+                        df[f"{col}_encoded"] = pd.Categorical(df[col]).codes
 
-    def minmax_normalize(self, frame: pd.DataFrame) -> pd.DataFrame:
-        """Min-max normalize numeric columns into the [0, 1] range.
+            numeric_columns = df.select_dtypes(include=[np.number]).columns
+            if len(numeric_columns) > 1:
+                df["feature_sum"] = df[numeric_columns].sum(axis=1)
+                df["feature_mean"] = df[numeric_columns].mean(axis=1)
+                df["feature_std"] = df[numeric_columns].std(axis=1)
 
-        Args:
-            frame: Input DataFrame.
-
-        Returns:
-            DataFrame with min-max normalized numeric columns.
-        """
-        result = frame.copy()
-        numeric_columns = result.select_dtypes(include="number").columns
-        if numeric_columns.empty:
-            return result
-        for column in numeric_columns:
-            minimum = result[column].min()
-            maximum = result[column].max()
-            span = maximum - minimum
-            if pd.isna(span) or span == 0:
-                result[column] = 0.0
-            else:
-                result[column] = (result[column] - minimum) / span
-        logger.info("Min-max normalized %d numeric column(s)", len(numeric_columns))
-        return result
+            logger.info("Transformation complete: %d columns", len(df.columns))
+            return df
+        except Exception as exc:  # noqa: BLE001 - transformation failures are logged
+            logger.error("Data transformation failed: %s", exc)
+            return df
 
 
-def transform_data(frame: pd.DataFrame, transformation_type: str) -> pd.DataFrame:
-    """Apply a numeric transformation to a DataFrame.
+def transform_data(df: pd.DataFrame, transformation_type: str = "standard") -> pd.DataFrame:
+    """Apply a data transformation to a DataFrame.
 
     Convenience function wrapping :class:`DataScaler`.
 
     Args:
-        frame: Input DataFrame.
-        transformation_type: ``"standard"`` (zero mean, unit variance) or
-            ``"normalize"`` (min-max scaled to [0, 1]).
+        df: Input DataFrame.
+        transformation_type: ``"standard"``, ``"normalize"``, or
+            ``"categorical"``. Defaults to ``"standard"``.
 
     Returns:
-        DataFrame with transformed numeric columns.
-
-    Raises:
-        ValueError: When the transformation name is unknown.
+        The transformed DataFrame (the input is returned on failure).
     """
-    return DataScaler().apply(frame, transformation_type)
+    return DataScaler().transform(df, transformation_type)
